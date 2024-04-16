@@ -1,0 +1,114 @@
+diff --git a/bin/reth/src/commands/import.rs b/bin/reth/src/commands/import.rs
+index ff0cf6080..d5f177f65 100644
+--- a/bin/reth/src/commands/import.rs
++++ b/bin/reth/src/commands/import.rs
+@@ -20,7 +20,10 @@ use reth_downloaders::{
+ };
+ use reth_interfaces::consensus::Consensus;
+ use reth_node_core::{events::node::NodeEvent, init::init_genesis};
++#[cfg(not(feature = "optimism"))]
+ use reth_node_ethereum::EthEvmConfig;
++#[cfg(feature = "optimism")]
++use reth_node_optimism::OptimismEvmConfig;
+ use reth_primitives::{stage::StageId, ChainSpec, B256};
+ use reth_provider::{HeaderSyncMode, ProviderFactory, StageCheckpointReader};
+ use reth_stages::{
+@@ -160,9 +163,14 @@ impl ImportCommand {
+             .into_task();
+ 
+         let (tip_tx, tip_rx) = watch::channel(B256::ZERO);
++        #[cfg(not(feature = "optimism"))]
+         let factory =
+             reth_revm::EvmProcessorFactory::new(self.chain.clone(), EthEvmConfig::default());
+ 
++        #[cfg(feature = "optimism")]
++        let factory =
++            reth_revm::EvmProcessorFactory::new(self.chain.clone(), OptimismEvmConfig::default());
++
+         let max_block = file_client.max_block().unwrap_or(0);
+         let mut pipeline = Pipeline::builder()
+             .with_tip_sender(tip_tx)
+diff --git a/crates/net/downloaders/src/file_client.rs b/crates/net/downloaders/src/file_client.rs
+index 0e4efb900..804d8b3b9 100644
+--- a/crates/net/downloaders/src/file_client.rs
++++ b/crates/net/downloaders/src/file_client.rs
+@@ -38,6 +38,9 @@ pub struct FileClient {
+ 
+     /// The buffered bodies retrieved when fetching new headers.
+     bodies: HashMap<BlockHash, BlockBody>,
++
++    /// Chain tip set based on highest incremental block hash
++    tip: Option<B256>,
+ }
+ 
+ /// An error that can occur when constructing and using a [`FileClient`].
+@@ -72,6 +75,8 @@ impl FileClient {
+         let mut headers = HashMap::new();
+         let mut hash_to_number = HashMap::new();
+         let mut bodies = HashMap::new();
++        let mut max_bock = 0u64;
++        let mut tip = None;
+ 
+         // use with_capacity to make sure the internal buffer contains the entire file
+         let mut stream = FramedRead::with_capacity(&reader[..], BlockFileCodec, file_len as usize);
+@@ -80,6 +85,11 @@ impl FileClient {
+             let block = block_res?;
+             let block_hash = block.header.hash_slow();
+ 
++            if block.number > max_bock {
++                max_bock = block.number;
++                tip = Some(block_hash);
++            }
++
+             // add to the internal maps
+             headers.insert(block.header.number, block.header.clone());
+             hash_to_number.insert(block_hash, block.header.number);
+@@ -95,12 +105,12 @@ impl FileClient {
+ 
+         trace!(blocks = headers.len(), "Initialized file client");
+ 
+-        Ok(Self { headers, hash_to_number, bodies })
++        Ok(Self { headers, hash_to_number, bodies, tip })
+     }
+ 
+     /// Get the tip hash of the chain.
+     pub fn tip(&self) -> Option<B256> {
+-        self.headers.get(&(self.headers.len() as u64)).map(|h| h.hash_slow())
++        self.tip
+     }
+ 
+     /// Returns the highest block number of this client has or `None` if empty
+diff --git a/crates/primitives/src/transaction/mod.rs b/crates/primitives/src/transaction/mod.rs
+index f54b9d25c..cb50d40af 100644
+--- a/crates/primitives/src/transaction/mod.rs
++++ b/crates/primitives/src/transaction/mod.rs
+@@ -124,6 +124,15 @@ pub enum Transaction {
+ // === impl Transaction ===
+ 
+ impl Transaction {
++    /// Short-circuit signer for optimism deposit txs
++    pub fn signer(&self) -> Option<Address> {
++        #[cfg(feature = "optimism")]
++        if let Transaction::Deposit(TxDeposit { from, .. }) = self {
++            return Some(*from)
++        }
++        None
++    }
++
+     /// Heavy operation that return signature hash over rlp encoded transaction.
+     /// It is only for signature signing or signer recovery.
+     pub fn signature_hash(&self) -> B256 {
+diff --git a/crates/stages/src/stages/sender_recovery.rs b/crates/stages/src/stages/sender_recovery.rs
+index a758b9b6b..4367416be 100644
+--- a/crates/stages/src/stages/sender_recovery.rs
++++ b/crates/stages/src/stages/sender_recovery.rs
+@@ -197,6 +197,9 @@ fn recover_sender(
+ 
+     let tx = transaction.value().expect("value to be formated");
+     tx.transaction.encode_without_signature(rlp_buf);
++    if let Some(sender) = tx.signer() {
++        return Ok((tx_id, sender))
++    }
+ 
+     // We call [Signature::recover_signer_unchecked] because transactions run in the pipeline are
+     // known to be valid - this means that we do not need to check whether or not the `s` value is

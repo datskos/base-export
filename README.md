@@ -28,6 +28,17 @@ for ((i=1; i<=13200000; i+=100000)); do
 done
 ```
 
+Due to regression in the reth alpha.22 import pipeline that broke base imports, I've included a patch that you can
+apply.
+
+```
+## in reth repo, assuming you've made it a sibling to base-export/
+git checkout v0.1.0-alpha.22
+git apply ../base-export/alpha.22-import.patch
+
+cargo build --release --features=optimism --bin=op-reth
+```
+
 To import into a fresh `op-reth` this is how I did it (you'll need to clone `reth` and build `op-reth`)
 
 ```shell
@@ -38,7 +49,7 @@ for ((i=1; i<=13200000; i+=100000)); do
     start=$i
     end=$((i + 99999))
     echo "Importing" $start " - " $end
-    ./target/release/op-reth import --chain base ../base-xport/data/blocks_$end
+    ./target/release/op-reth import --chain base ../base-export/data/blocks_$end
 done
 ```
 
