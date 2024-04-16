@@ -39,17 +39,28 @@ git apply ../base-export/alpha.22-import.patch
 cargo build --release --features=optimism --bin=op-reth
 ```
 
+A patch for reth beta.5 is also available via:
+
+```shell
+## in the reth repo, assuming you've made it a sibling to base-export/
+git checkout v0.2.0-beta.5
+git apply ../base-export/beta.5-import.patch
+
+cargo build --release --features=optimism --bin=op-reth
+```
+
 To import into a fresh `op-reth` this is how I did it (you'll need to clone `reth` and build `op-reth`)
 
 ```shell
 ## import.sh (in your reth directory, compiled as op-reth)
+## change datadir and adjust block number as needed
 set -e
 set -x
 for ((i=1; i<=13200000; i+=100000)); do
     start=$i
     end=$((i + 99999))
     echo "Importing" $start " - " $end
-    ./target/release/op-reth import --chain base ../base-export/data/blocks_$end
+    ./target/release/op-reth import --chain base --datadir <your_specified_data_dir> ../base-export/data/blocks_$end
 done
 ```
 
