@@ -31,8 +31,8 @@ done
 Due to regression in the reth alpha.22 import pipeline that broke base imports, I've included a patch that you can
 apply.
 
-```
-## in reth repo, assuming you've made it a sibling to base-export/
+```shell
+## in the reth repo, assuming you've made it a sibling to base-export/
 git checkout v0.1.0-alpha.22
 git apply ../base-export/alpha.22-import.patch
 
