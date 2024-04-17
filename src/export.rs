@@ -4,7 +4,7 @@ use alloy_rlp::Decodable;
 use ethers_core::types::{Block as EthersBlock, Transaction as EthersTransaction};
 use ethers_providers::{Http, Middleware, Provider};
 use futures::{future, SinkExt};
-use reth_primitives::{Block, Header, TransactionSigned};
+use reth_primitives::{Block, Header, TransactionSigned, Withdrawals};
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 use tokio::fs::File;
@@ -78,11 +78,11 @@ fn ethers_block_to_block(block: EthersBlock<EthersTransaction>) -> eyre::Result<
         base_fee_per_gas: block.base_fee_per_gas.map(|fee| fee.as_u64()),
         ommers_hash: block.uncles_hash.0.into(),
         gas_used: block.gas_used.as_u64(),
-        withdrawals_root: None,
         logs_bloom: block.logs_bloom.unwrap_or_default().0.into(),
-        blob_gas_used: None,
-        excess_blob_gas: None,
-        parent_beacon_block_root: None,
+        withdrawals_root: block.withdrawals_root.map(|b| b.0.into()),
+        blob_gas_used: block.blob_gas_used.map(|f|f.as_u64()),
+        excess_blob_gas: block.excess_blob_gas.map(|f|f.as_u64()),
+        parent_beacon_block_root: block.parent_beacon_block_root.map(|b| b.0.into()),
     };
     let mut body: Vec<TransactionSigned> = vec![];
     for tx in block.transactions {
@@ -96,6 +96,11 @@ fn ethers_block_to_block(block: EthersBlock<EthersTransaction>) -> eyre::Result<
         header,
         body,
         ommers: vec![],
-        withdrawals: None,
+        withdrawals: match block.withdrawals {
+            None => None,
+
+            // No withdrawals on base
+            Some(_) => Some(Withdrawals::new(vec![]))
+        },
     })
 }
