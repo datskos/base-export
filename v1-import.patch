@@ -1,0 +1,73 @@
+diff --git a/crates/net/downloaders/src/file_client.rs b/crates/net/downloaders/src/file_client.rs
+index 3464baf5d..385772db9 100644
+--- a/crates/net/downloaders/src/file_client.rs
++++ b/crates/net/downloaders/src/file_client.rs
+@@ -46,6 +46,9 @@ pub struct FileClient {
+ 
+     /// The buffered bodies retrieved when fetching new headers.
+     bodies: HashMap<BlockHash, BlockBody>,
++
++    /// Chain tip set based on highest incremental block hash
++    tip: Option<B256>,
+ }
+ 
+ /// An error that can occur when constructing and using a [`FileClient`].
+@@ -91,7 +94,7 @@ impl FileClient {
+ 
+     /// Get the tip hash of the chain.
+     pub fn tip(&self) -> Option<B256> {
+-        self.headers.get(&self.max_block()?).map(|h| h.hash_slow())
++        self.tip
+     }
+ 
+     /// Get the start hash of the chain.
+@@ -192,6 +195,8 @@ impl FromReader for FileClient {
+         let mut headers = HashMap::new();
+         let mut hash_to_number = HashMap::new();
+         let mut bodies = HashMap::new();
++        let mut max_block = 0u64;
++        let mut tip = None;
+ 
+         // use with_capacity to make sure the internal buffer contains the entire chunk
+         let mut stream = FramedRead::with_capacity(reader, BlockFileCodec, num_bytes as usize);
+@@ -225,6 +230,11 @@ impl FromReader for FileClient {
+                 let block_number = block.header.number;
+                 let block_hash = block.header.hash_slow();
+ 
++                if block.number > max_block {
++                    max_block = block.number;
++                    tip = Some(block_hash);
++                }
++
+                 // add to the internal maps
+                 headers.insert(block.header.number, block.header.clone());
+                 hash_to_number.insert(block_hash, block.header.number);
+@@ -256,7 +266,7 @@ impl FromReader for FileClient {
+ 
+             trace!(target: "downloaders::file", blocks = headers.len(), "Initialized file client");
+ 
+-            Ok((Self { headers, hash_to_number, bodies }, remaining_bytes))
++            Ok((Self { headers, hash_to_number, bodies, tip }, remaining_bytes))
+         }
+     }
+ }
+diff --git a/crates/primitives/src/transaction/mod.rs b/crates/primitives/src/transaction/mod.rs
+index c23d454f8..4da801f08 100644
+--- a/crates/primitives/src/transaction/mod.rs
++++ b/crates/primitives/src/transaction/mod.rs
+@@ -140,6 +140,15 @@ pub enum Transaction {
+ // === impl Transaction ===
+ 
+ impl Transaction {
++    /// Short-circuit signer for optimism deposit txs
++    pub fn signer(&self) -> Option<Address> {
++        #[cfg(feature = "optimism")]
++        if let Transaction::Deposit(TxDeposit { from, .. }) = self {
++            return Some(*from);
++        }
++        None
++    }
++
+     /// Heavy operation that return signature hash over rlp encoded transaction.
+     /// It is only for signature signing or signer recovery.
+     pub fn signature_hash(&self) -> B256 {
